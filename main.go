@@ -44,7 +44,7 @@ func work(jobs chan (job), results chan (result), wg *sync.WaitGroup) {
 }
 
 func main() {
-	const workers = 5
+	const workers = 10
 	jobs := make(chan job, workers)
 	results := make(chan result, workers)
 	var wg sync.WaitGroup
