@@ -27,6 +27,8 @@ type job struct {
 }
 
 type result struct {
+	cmd    string
+	args   []string
 	output []byte
 	err    error
 }
@@ -37,7 +39,7 @@ func work(jobs chan (job), results chan (result), wg *sync.WaitGroup) {
 	for j := range jobs {
 		cmd := exec.CommandContext(context.TODO(), j.cmd, j.args...)
 		output, err := cmd.CombinedOutput()
-		results <- result{output, err}
+		results <- result{j.cmd, j.args, output, err}
 	}
 }
 
@@ -57,7 +59,7 @@ func main() {
 		for result := range results {
 			fmt.Print(string(result.output))
 			if e, ok := result.err.(*exec.ExitError); ok {
-				panic(errors.Wrap(e, "exit error"))
+				panic(errors.Wrapf(e, "exit error on %s %s", result.cmd, result.args))
 			}
 		}
 	}()
