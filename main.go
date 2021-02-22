@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"sync"
 
 	"github.com/pkg/errors"
 )
@@ -20,8 +21,47 @@ import (
 //   * track failures and re-run
 //   *  use '--' as a separator for arguments
 
+type job struct {
+	cmd  string
+	args []string
+}
+
+type result struct {
+	output []byte
+	err    error
+}
+
+func work(jobs chan (job), results chan (result), wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	for j := range jobs {
+		cmd := exec.CommandContext(context.TODO(), j.cmd, j.args...)
+		output, err := cmd.CombinedOutput()
+		results <- result{output, err}
+	}
+}
+
 func main() {
+	const workers = 5
+	jobs := make(chan job, workers)
+	results := make(chan result, workers)
+	var wg sync.WaitGroup
+
 	scanner := bufio.NewScanner(os.Stdin)
+
+	for i := 0; i < workers; i++ {
+		go work(jobs, results, &wg)
+	}
+
+	go func() {
+		for result := range results {
+			fmt.Print(string(result.output))
+			if e, ok := result.err.(*exec.ExitError); ok {
+				panic(errors.Wrap(e, "exit error"))
+			}
+		}
+	}()
+
 	for scanner.Scan() {
 		args := []string{}
 		placeholderFound := false
@@ -39,16 +79,14 @@ func main() {
 			args = append(args, scanner.Text())
 		}
 
-		cmd := exec.CommandContext(context.TODO(), os.Args[1], args...)
-
-		output, err := cmd.CombinedOutput()
-		fmt.Print(string(output))
-		if e, ok := err.(*exec.ExitError); ok {
-			panic(errors.Wrap(e, "exit error"))
-		}
+		jobs <- job{os.Args[1], args}
 	}
 
 	if err := scanner.Err(); err != nil {
 		log.Println(err)
 	}
+
+	close(jobs)
+
+	wg.Wait()
 }
