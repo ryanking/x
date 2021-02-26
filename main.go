@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -55,13 +56,15 @@ func main() {
 		go work(jobs, results, &wg)
 	}
 
+	wg.Add(1)
 	go func() {
 		for result := range results {
 			fmt.Print(string(result.output))
 			if e, ok := result.err.(*exec.ExitError); ok {
-				panic(errors.Wrapf(e, "exit error on %s %s", result.cmd, result.args))
+				log.Println(errors.Wrapf(e, "exit error on %s %s", result.cmd, result.args))
 			}
 		}
+		wg.Done()
 	}()
 
 	for scanner.Scan() {
@@ -69,8 +72,8 @@ func main() {
 		placeholderFound := false
 
 		for _, c := range os.Args[2:len(os.Args)] {
-			if c == "{}" {
-				args = append(args, scanner.Text())
+			if strings.Contains(c, "{}") {
+				args = append(args, strings.Replace(c, "{}", scanner.Text(), -1))
 				placeholderFound = true
 			} else {
 				args = append(args, c)
