@@ -5,12 +5,16 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
 
 	"github.com/pkg/errors"
+
+	_ "net/http"
+	_ "net/http/pprof"
 )
 
 // TODO
@@ -36,7 +40,6 @@ type result struct {
 
 func work(jobs chan (job), results chan (result), wg *sync.WaitGroup) {
 	defer wg.Done()
-
 	for j := range jobs {
 		cmd := exec.CommandContext(context.TODO(), j.cmd, j.args...)
 		output, err := cmd.CombinedOutput()
@@ -45,18 +48,28 @@ func work(jobs chan (job), results chan (result), wg *sync.WaitGroup) {
 }
 
 func main() {
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
 	const workers = 5
 	jobs := make(chan job, workers)
 	results := make(chan result, workers)
 	var wg sync.WaitGroup
+	var resultsWg sync.WaitGroup
 
 	scanner := bufio.NewScanner(os.Stdin)
 
 	for i := 0; i < workers; i++ {
+		wg.Add(1)
 		go work(jobs, results, &wg)
 	}
 
-	wg.Add(1)
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	resultsWg.Add(1)
 	go func() {
 		for result := range results {
 			fmt.Print(string(result.output))
@@ -64,7 +77,7 @@ func main() {
 				log.Println(errors.Wrapf(e, "exit error on %s %s", result.cmd, result.args))
 			}
 		}
-		wg.Done()
+		resultsWg.Done()
 	}()
 
 	for scanner.Scan() {
@@ -92,6 +105,5 @@ func main() {
 	}
 
 	close(jobs)
-
-	wg.Wait()
+	resultsWg.Wait()
 }
