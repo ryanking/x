@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -32,10 +33,11 @@ type job struct {
 }
 
 type result struct {
-	cmd    string
-	args   []string
-	output []byte
-	err    error
+	cmd      string
+	args     []string
+	exitcode int
+	output   []byte
+	err      error
 }
 
 func work(jobs chan (job), results chan (result), wg *sync.WaitGroup) {
@@ -43,8 +45,16 @@ func work(jobs chan (job), results chan (result), wg *sync.WaitGroup) {
 	for j := range jobs {
 		cmd := exec.CommandContext(context.TODO(), j.cmd, j.args...)
 		output, err := cmd.CombinedOutput()
-		results <- result{j.cmd, j.args, output, err}
+		results <- result{j.cmd, j.args, cmd.ProcessState.ExitCode(), output, err}
 	}
+}
+
+var errorOnly bool
+var echo bool
+
+func init() {
+	flag.BoolVar(&errorOnly, "error-only", false, "")
+	flag.BoolVar(&echo, "echo", false, "")
 }
 
 func main() {
@@ -56,6 +66,8 @@ func main() {
 	results := make(chan result, workers)
 	var wg sync.WaitGroup
 	var resultsWg sync.WaitGroup
+
+	flag.Parse()
 
 	scanner := bufio.NewScanner(os.Stdin)
 
@@ -72,21 +84,25 @@ func main() {
 	resultsWg.Add(1)
 	go func() {
 		for result := range results {
-			fmt.Print(string(result.output))
-			if e, ok := result.err.(*exec.ExitError); ok {
-				log.Println(errors.Wrapf(e, "exit error on %s %s", result.cmd, result.args))
+			if !errorOnly || result.exitcode != 0 || result.err != nil {
+				fmt.Print(string(result.output))
+				if e, ok := result.err.(*exec.ExitError); ok {
+					log.Println(errors.Wrapf(e, "exit error on %s %s", result.cmd, result.args))
+				}
 			}
 		}
 		resultsWg.Done()
 	}()
 
 	for scanner.Scan() {
+		t := scanner.Text()
+		t = strings.TrimSpace(t)
 		args := []string{}
 		placeholderFound := false
 
-		for _, c := range os.Args[2:len(os.Args)] {
+		for _, c := range flag.Args()[1:len(flag.Args())] {
 			if strings.Contains(c, "{}") {
-				args = append(args, strings.Replace(c, "{}", scanner.Text(), -1))
+				args = append(args, strings.Replace(c, "{}", t, -1))
 				placeholderFound = true
 			} else {
 				args = append(args, c)
@@ -94,10 +110,14 @@ func main() {
 		}
 
 		if !placeholderFound {
-			args = append(args, scanner.Text())
+			args = append(args, t)
 		}
 
-		jobs <- job{os.Args[1], args}
+		j := job{flag.Args()[0], args}
+		if echo {
+			fmt.Printf("enqueuing job %#v\n", j)
+		}
+		jobs <- j
 	}
 
 	if err := scanner.Err(); err != nil {
